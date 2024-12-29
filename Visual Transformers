@@ -1,0 +1,207 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "authorship_tag": "ABX9TyPBzpY1Frv7VHeXJpZpaDD2",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/SalarShafiee/ML-Projects/blob/main/Visual%20Transformers\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 2,
+      "metadata": {
+        "id": "dNjp8_Gb1Dul"
+      },
+      "outputs": [],
+      "source": [
+        "import tensorflow as tf\n",
+        "\"\"\"#Patch Embedding\"\"\"\n",
+        "\n",
+        "class PatchEmbedding(tf.keras.layers.Layer):\n",
+        "  def __init__(self , size , num_of_patches , projection_dim):\n",
+        "    super().__init__()\n",
+        "\n",
+        "    self.size = size\n",
+        "    self.num_of_patches = num_of_patches + 1\n",
+        "    self.projection_dim = projection_dim\n",
+        "\n",
+        "    self.projection = tf.keras.layers.Dense(projection_dim)\n",
+        "\n",
+        "\n",
+        "\n",
+        "    self.positionalEmbedding = tf.keras.layers.Embedding(self.num_of_patches , projection_dim)\n",
+        "\n",
+        "\n",
+        "  def call(self , inputs):\n",
+        "    patches = tf.image.extract_patches(inputs , sizes=[1 , self.size , self.size , 1] , strides=[1 , self.size , self.size , 1] , rates=[1 , 1 , 1 , 1] ,  padding=\"VALID\")\n",
+        "    patches = tf.reshape(patches , (tf.shape(inputs)[0] , -1 , self.size * self.size * 3))\n",
+        "    patches = self.projection(patches)\n",
+        "\n",
+        "    clsToken = tf.repeat(self.clsToken , tf.shape(inputs)[0] , 0)\n",
+        "\n",
+        "    patches = tf.concat((clsToken , patches) , axis=1)\n",
+        "\n",
+        "    positions = tf.range(0 , self.num_of_patches , 1)[tf.newaxis , ...]\n",
+        "    positionalEmbedding = self.positionalEmbedding(positions)\n",
+        "\n",
+        "    patches = patches + positionalEmbedding\n",
+        "\n",
+        "    return patches\n",
+        "\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "PatchEmbedding"
+      ],
+      "metadata": {
+        "id": "8iaCFCeytlbq"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "\"\"\"#Each Layer of Transformer Encoder\"\"\"\n",
+        "\n",
+        "class TransformerLayer(tf.keras.layers.Layer):\n",
+        "  def __init__(self , d_model , heads , mlp_rate , dropout_rate=0.1):\n",
+        "    super().__init__()\n",
+        "\n",
+        "    self.layernorm_1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)\n",
+        "\n",
+        "    self.mha = tf.keras.layers.MultiHeadAttention(heads , d_model//heads , dropout=dropout_rate)\n",
+        "\n",
+        "    self.layernorm_2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)\n",
+        "\n",
+        "    self.mlp = tf.keras.Sequential([\n",
+        "                                    tf.keras.layers.Dense(d_model * mlp_rate , activation=\"gelu\"),\n",
+        "                                    tf.keras.layers.Dropout(dropout_rate),\n",
+        "                                    tf.keras.layers.Dense(d_model , activation=\"gelu\"),\n",
+        "                                    tf.keras.layers.Dropout(dropout_rate)\n",
+        "    ])\n",
+        "\n",
+        "  def call(self , inputs , training=True):\n",
+        "    out_1 = self.layernorm_1(inputs)\n",
+        "    out_1 = self.mha(out_1 , out_1 , training=training)\n",
+        "    out_1 = inputs + out_1\n",
+        "\n",
+        "    out_2 = self.layernorm_2(out_1)\n",
+        "    out_2 = self.mlp(out_2 , training=training)\n",
+        "    out_2 = out_1 + out_2\n",
+        "\n",
+        "    return out_2"
+      ],
+      "metadata": {
+        "id": "YysStkgR1-V2"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "\"\"\"#Transformer Encoder\"\"\"\n",
+        "\n",
+        "class TransformerEncoder(tf.keras.layers.Layer):\n",
+        "  def __init__(self , d_model , heads , mlp_rate , num_layers=1 , dropout_rate=0.1):\n",
+        "    super().__init__()\n",
+        "\n",
+        "    self.encoders = [TransformerLayer(d_model , heads , mlp_rate , dropout_rate) for _ in range(num_layers)]\n",
+        "\n",
+        "  def call(self , inputs , training=True):\n",
+        "    x = inputs\n",
+        "\n",
+        "    for layer in self.encoders:\n",
+        "      x = layer(x , training=training)\n",
+        "\n",
+        "    return x\n"
+      ],
+      "metadata": {
+        "id": "axsvG4tc1_HB"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "\"\"\"#Vision Transformer\"\"\"\n",
+        "\n",
+        "class ViT(tf.keras.Model):\n",
+        "  def __init__(self , num_classes , patch_size , num_of_patches , d_model , heads , num_layers , mlp_rate , dropout_rate=0.1 , prediction_dropout=0.3):\n",
+        "    super().__init__()\n",
+        "\n",
+        "    self.patchEmbedding = PatchEmbedding(patch_size , num_of_patches , d_model)\n",
+        "    self.encoder = TransformerEncoder(d_model , heads , mlp_rate , num_layers , dropout_rate)\n",
+        "\n",
+        "    self.prediction = tf.keras.Sequential([\n",
+        "                                           tf.keras.layers.Dropout(prediction_dropout),\n",
+        "                                           tf.keras.layers.Dense(mlp_rate * d_model , activation=\"gelu\"),\n",
+        "                                           tf.keras.layers.Dropout(prediction_dropout),\n",
+        "                                           tf.keras.layers.Dense(num_classes , activation=\"softmax\")\n",
+        "    ])\n",
+        "\n",
+        "  def call(self , inputs , training=True):\n",
+        "    patches = self.patchEmbedding(inputs)\n",
+        "\n",
+        "    encoderResult = self.encoder(patches , training=training)\n",
+        "\n",
+        "    clsResult = encoderResult[: , 0 , :]\n",
+        "\n",
+        "    prediction = self.prediction(clsResult , training=training)\n",
+        "\n",
+        "    return prediction\n"
+      ],
+      "metadata": {
+        "id": "b5INePR52J2J"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "\n",
+        "\"\"\"#Complete Model\"\"\"\n",
+        "\n",
+        "vitClassifier = ViT(\n",
+        "                    num_classes=1000,\n",
+        "                    patch_size=16,\n",
+        "                    num_of_patches=(224//16)**2,\n",
+        "                    d_model=128,\n",
+        "                    heads=2,\n",
+        "                    num_layers=4,\n",
+        "                    mlp_rate=2,\n",
+        "                    dropout_rate=0.1)"
+      ],
+      "metadata": {
+        "id": "_DSIJkip2MCR"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
